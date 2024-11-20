@@ -24,6 +24,7 @@ jobs:
       shell: msys2 {0}
       run: |
         export OS=windows
+        cd build/pause
         make build
     - name: Docker Build
       run: |
