@@ -6,8 +6,8 @@ on:
 
 jobs:
   build-containers:
-    name: Build Containers
     runs-on: windows-2019
+    name: Build Containers
     steps:
     - name: Checkout
       uses: actions/checkout@v2
