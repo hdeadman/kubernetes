@@ -1,0 +1,23 @@
+name: CI Workflow
+on:
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+
+jobs:
+  build-containers:
+    name: Build Containers
+    runs-on: windows-2019
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+    - name: Build Pre-reqs
+      run: |
+        export OS=windows
+        make build
+    - name: Docker Build
+      run: |
+        docker build -f build/pause/Dockerfile_windows --build-arg BASE=nanoserver-1809 -build-arg ARCH=amd64 build/pause
