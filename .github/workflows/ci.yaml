@@ -20,6 +20,7 @@ jobs:
         update: true
         install: >-
           make
+          git
     - name: Build Pre-reqs
       shell: msys2 {0}
       run: |
