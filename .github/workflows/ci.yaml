@@ -29,4 +29,4 @@ jobs:
         make build
     - name: Docker Build
       run: |
-        docker build -f build/pause/Dockerfile_windows --build-arg BASE=nanoserver-1809 --build-arg ARCH=amd64 build/pause
+        docker build -f build/pause/Dockerfile_windows --build-arg BASE=mcr.microsoft.com/windows/nanoserver:ltsc2019 --build-arg ARCH=amd64 build/pause
