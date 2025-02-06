@@ -25,6 +25,8 @@ jobs:
       shell: msys2 {0}
       run: |
         export OS=windows
+        export ALL_OSVERSIONS=ltsc2019
+        export OSVERSION=ltsc2019
         cd build/pause
         make build
     - name: Docker Build
