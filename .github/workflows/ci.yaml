@@ -39,10 +39,12 @@ jobs:
     - run: git config --global core.autocrlf input
     - name: Checkout
       uses: actions/checkout@v4
-    - name: Download a single artifact
+    - name: Download build artifacts from cross compile
       uses: actions/download-artifact@v4
       with:
         name: windows-pause-container-binaries
+        path: |
+          build/pause/bin
     - name: Docker Build
       run: |
         ls
