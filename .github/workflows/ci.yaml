@@ -4,10 +4,6 @@ on:
     branches:
     - master
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   cross-compile-windows:
     runs-on: ubuntu-latest
@@ -27,6 +23,7 @@ jobs:
           build/pause/bin
 
   build-containers:
+    needs: [cross-compile-windows]
     runs-on: windows-2019
     name: Build Containers
     defaults:
@@ -36,7 +33,7 @@ jobs:
     - name: Setup Msys2
       uses: msys2/setup-msys2@v2
       with:
-        update: true
+        update: false
         path-type: inherit
         release: false
     - run: git config --global core.autocrlf input
