@@ -39,7 +39,7 @@ jobs:
         shell: msys2 {0}
     strategy:
       matrix:
-        windows_version: ["2019", 2022"]
+        windows_version: ["2019", "2022"]
     runs-on: "windows-${{ matrix.windows_version }}"
     steps:
     - name: Setup Msys2
