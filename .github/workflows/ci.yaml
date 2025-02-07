@@ -15,6 +15,12 @@ jobs:
       run: |
         cd build/pause
         make build OS=windows
+    - name: Archive build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-pause-container-binaries
+        path: |
+          build/pause/bin
 
   build-containers:
     runs-on: windows-2019
@@ -25,21 +31,10 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v2
-    - name: Setup Msys2
-      uses: msys2/setup-msys2@v2
+    - name: Download a single artifact
+      uses: actions/download-artifact@v4
       with:
-        update: true
-        install: >-
-          make
-          git
-    - name: Build Pre-reqs
-      shell: msys2 {0}
-      run: |
-        export OS=windows
-        export ALL_OSVERSIONS=ltsc2019
-        export OSVERSION=ltsc2019
-        cd build/pause
-        make build
+        name: windows-pause-container-binaries
     - name: Docker Build
       run: |
         docker build -f build/pause/Dockerfile_windows --build-arg BASE=mcr.microsoft.com/windows/nanoserver:ltsc2019 --build-arg ARCH=amd64 build/pause
