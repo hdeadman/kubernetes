@@ -14,7 +14,7 @@ jobs:
     name: Cross Compile Windows
     steps:
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
     - name: Build Pause and Wincat
       run: |
         cd build/pause
@@ -33,12 +33,20 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
+    - name: Setup Msys2
+      uses: msys2/setup-msys2@v2
+      with:
+        update: true
+        path-type: inherit
+        release: false
+    - run: git config --global core.autocrlf input
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
     - name: Download a single artifact
       uses: actions/download-artifact@v4
       with:
         name: windows-pause-container-binaries
     - name: Docker Build
       run: |
+        ls
         docker build -f build/pause/Dockerfile_windows --build-arg BASE=mcr.microsoft.com/windows/nanoserver:ltsc2019 --build-arg ARCH=amd64 build/pause
