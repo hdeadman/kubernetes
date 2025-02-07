@@ -704,9 +704,28 @@ func TestValidatePersistentVolumeSpec(t *testing.T) {
 				MountOptions: []string{"soft", "read-write"},
 			},
 		},
+		"invalid-node-affinity": {
+			isExpectedFailure: true,
+			isInlineSpec:      false,
+			pvSpec: &core.PersistentVolumeSpec{
+				NodeAffinity: &core.VolumeNodeAffinity{
+					Required: &core.NodeSelector{
+						NodeSelectorTerms: []core.NodeSelectorTerm{{
+							MatchExpressions: []core.NodeSelectorRequirement{{
+								Key:      "foo",
+								Operator: core.NodeSelectorOpIn,
+								Values:   []string{"-1"},
+							}},
+						}},
+					},
+				},
+			},
+		},
 	}
 	for name, scenario := range scenarios {
-		opts := PersistentVolumeSpecValidationOptions{}
+		opts := ValidationOptionsForPersistentVolume(&core.PersistentVolume{
+			Spec: *scenario.pvSpec.DeepCopy(),
+		}, nil)
 		errs := ValidatePersistentVolumeSpec(scenario.pvSpec, "", scenario.isInlineSpec, field.NewPath("field"), opts)
 		if len(errs) == 0 && scenario.isExpectedFailure {
 			t.Errorf("Unexpected success for scenario: %s", name)
@@ -997,6 +1016,24 @@ func TestValidationOptionsForPersistentVolume(t *testing.T) {
 			},
 			enableVolumeAttributesClass: false,
 			expectValidationOpts:        PersistentVolumeSpecValidationOptions{EnableVolumeAttributesClass: true},
+		},
+		"old pv has invalid label-value in node affinity": {
+			oldPv: &core.PersistentVolume{
+				Spec: core.PersistentVolumeSpec{
+					NodeAffinity: &core.VolumeNodeAffinity{
+						Required: &core.NodeSelector{
+							NodeSelectorTerms: []core.NodeSelectorTerm{{
+								MatchExpressions: []core.NodeSelectorRequirement{{
+									Key:      "foo",
+									Operator: core.NodeSelectorOpIn,
+									Values:   []string{"-1"},
+								}},
+							}},
+						},
+					},
+				},
+			},
+			expectValidationOpts: PersistentVolumeSpecValidationOptions{AllowInvalidLabelValueInRequiredNodeAffinity: true},
 		},
 	}
 
@@ -1463,6 +1500,11 @@ func TestValidateVolumeNodeAffinityUpdate(t *testing.T) {
 			isExpectedFailure: true,
 			oldPV:             testVolumeWithNodeAffinity(simpleVolumeNodeAffinity("foo", "bar")),
 			newPV:             testVolumeWithNodeAffinity(nil),
+		},
+		"old affinity already has invalid label-value": {
+			isExpectedFailure: false,
+			oldPV:             testVolumeWithNodeAffinity(simpleVolumeNodeAffinity(v1.LabelInstanceType, "-1")),
+			newPV:             testVolumeWithNodeAffinity(simpleVolumeNodeAffinity(v1.LabelInstanceTypeStable, "-1")),
 		},
 	}
 
@@ -9223,10 +9265,18 @@ func TestValidateInitContainers(t *testing.T) {
 			},
 			SuccessThreshold: 1,
 		},
+	}, {
+		Name:                     "container-4-allowed-resize-policy",
+		Image:                    "image",
+		ImagePullPolicy:          "IfNotPresent",
+		TerminationMessagePolicy: "File",
+		ResizePolicy: []core.ContainerResizePolicy{
+			{ResourceName: "cpu", RestartPolicy: "NotRequired"},
+		},
 	},
 	}
 	var PodRestartPolicy core.RestartPolicy = "Never"
-	if errs := validateInitContainers(successCase, containers, volumeDevices, nil, defaultGracePeriod, field.NewPath("field"), PodValidationOptions{}, &PodRestartPolicy, noUserNamespace); len(errs) != 0 {
+	if errs := validateInitContainers(successCase, containers, volumeDevices, nil, defaultGracePeriod, field.NewPath("field"), PodValidationOptions{AllowSidecarResizePolicy: true}, &PodRestartPolicy, noUserNamespace); len(errs) != 0 {
 		t.Errorf("expected success: %v", errs)
 	}
 
@@ -9602,6 +9652,20 @@ func TestValidateInitContainers(t *testing.T) {
 		}},
 		field.ErrorList{{Type: field.ErrorTypeRequired, Field: "initContainers[0].lifecycle.preStop", BadValue: ""}},
 	},
+		{
+			"Not supported ResizePolicy: invalid",
+			line(),
+			[]core.Container{{
+				Name:                     "init",
+				Image:                    "image",
+				ImagePullPolicy:          "IfNotPresent",
+				TerminationMessagePolicy: "File",
+				ResizePolicy: []core.ContainerResizePolicy{
+					{ResourceName: "cpu", RestartPolicy: "NotRequired"},
+				},
+			}},
+			field.ErrorList{{Type: field.ErrorTypeInvalid, Field: "initContainers[0].resizePolicy", BadValue: []core.ContainerResizePolicy{{ResourceName: "cpu", RestartPolicy: "NotRequired"}}}},
+		},
 	}
 
 	for _, tc := range errorCases {
@@ -10236,11 +10300,6 @@ func TestValidatePodSpec(t *testing.T) {
 			podtest.SetSecurityContext(&core.PodSecurityContext{
 				FSGroupChangePolicy: &badfsGroupChangePolicy1,
 			}),
-		),
-		"disallowed resources resize policy for init containers": *podtest.MakePod("",
-			podtest.SetInitContainers(podtest.MakeContainer("initctr", podtest.SetContainerResizePolicy(
-				core.ContainerResizePolicy{ResourceName: "cpu", RestartPolicy: "NotRequired"},
-			))),
 		),
 	}
 	for k, v := range failureCases {
@@ -12242,6 +12301,23 @@ func TestValidatePod(t *testing.T) {
 				podtest.SetAnnotations(map[string]string{core.PodDeletionCost: "+10"}),
 			),
 		},
+		"invalid required node affinity, value of NodeSelectorRequirement should be a valid label value": {
+			expectedError: "spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].values[0]: Invalid value: \"-1\": a valid label must be an empty string or consist of alphanumeric characters, '-', '_' or '.', and must start and end with an alphanumeric character (e.g. 'MyValue',  or 'my_value',  or '12345', regex used for validation is '(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?')",
+			spec: *podtest.MakePod("123",
+				podtest.SetAffinity(&core.Affinity{
+					NodeAffinity: &core.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &core.NodeSelector{
+							NodeSelectorTerms: []core.NodeSelectorTerm{{
+								MatchExpressions: []core.NodeSelectorRequirement{{
+									Key:      "foo",
+									Operator: core.NodeSelectorOpIn,
+									Values:   []string{"-1"},
+								}},
+							}},
+						}},
+				}),
+			),
+		},
 	}
 
 	for k, v := range errorCases {
@@ -12316,6 +12392,7 @@ func TestValidatePodUpdate(t *testing.T) {
 		old  core.Pod
 		new  core.Pod
 		err  string
+		opts PodValidationOptions
 	}{
 		{new: *podtest.MakePod(""), old: *podtest.MakePod(""), err: "", test: "nothing"}, {
 			new:  *podtest.MakePod("foo"),
@@ -13670,6 +13747,73 @@ func TestValidatePodUpdate(t *testing.T) {
 			test: "the podAntiAffinity cannot be updated on gated pods",
 		},
 		{
+			old: *podtest.MakePod("foo",
+				podtest.SetAffinity(&core.Affinity{
+					NodeAffinity: &core.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &core.NodeSelector{
+							NodeSelectorTerms: []core.NodeSelectorTerm{{
+								MatchExpressions: []core.NodeSelectorRequirement{{
+									Key:      "expr",
+									Operator: core.NodeSelectorOpIn,
+									Values:   []string{"-1"},
+								}},
+							}},
+						}},
+				}),
+				podtest.SetSchedulingGates(core.PodSchedulingGate{Name: "baz"}),
+			),
+			new: *podtest.MakePod("foo",
+				podtest.SetAffinity(&core.Affinity{
+					NodeAffinity: &core.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &core.NodeSelector{
+							NodeSelectorTerms: []core.NodeSelectorTerm{{
+								MatchExpressions: []core.NodeSelectorRequirement{{
+									Key:      "expr",
+									Operator: core.NodeSelectorOpIn,
+									Values:   []string{"-1"},
+								}},
+							}},
+						}},
+				}),
+			),
+			test: "allow update pod if old pod already has invalid label-value in node affinity",
+			opts: PodValidationOptions{AllowInvalidLabelValueInRequiredNodeAffinity: true},
+		},
+		{
+			old: *podtest.MakePod("foo",
+				podtest.SetAffinity(&core.Affinity{
+					NodeAffinity: &core.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &core.NodeSelector{
+							NodeSelectorTerms: []core.NodeSelectorTerm{{
+								MatchExpressions: []core.NodeSelectorRequirement{{
+									Key:      "expr",
+									Operator: core.NodeSelectorOpIn,
+									Values:   []string{"bar"},
+								}},
+							}},
+						}},
+				}),
+				podtest.SetSchedulingGates(core.PodSchedulingGate{Name: "baz"}),
+			),
+			new: *podtest.MakePod("foo",
+				podtest.SetAffinity(&core.Affinity{
+					NodeAffinity: &core.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &core.NodeSelector{
+							NodeSelectorTerms: []core.NodeSelectorTerm{{
+								MatchExpressions: []core.NodeSelectorRequirement{{
+									Key:      "expr",
+									Operator: core.NodeSelectorOpIn,
+									Values:   []string{"-1"},
+								}},
+							}},
+						}},
+				}),
+				podtest.SetSchedulingGates(core.PodSchedulingGate{Name: "baz"}),
+			),
+			err:  `a valid label must be an empty string or consist of alphanumeric characters, '-', '_' or '.'`,
+			test: "not allow update node affinity to an invalid label-value",
+		},
+		{
 			new: *podtest.MakePod("pod",
 				podtest.SetContainers(podtest.MakeContainer("container",
 					podtest.SetContainerResources(core.ResourceRequirements{
@@ -13730,7 +13874,7 @@ func TestValidatePodUpdate(t *testing.T) {
 			test.old.Spec.RestartPolicy = "Always"
 		}
 
-		errs := ValidatePodUpdate(&test.new, &test.old, PodValidationOptions{})
+		errs := ValidatePodUpdate(&test.new, &test.old, test.opts)
 		if test.err == "" {
 			if len(errs) != 0 {
 				t.Errorf("unexpected invalid: %s (%+v)\nA: %+v\nB: %+v", test.test, errs, test.new, test.old)
@@ -15385,16 +15529,15 @@ func TestValidateServiceCreate(t *testing.T) {
 		},
 		numErrs: 0,
 	}, {
-		// For now we open firewalls, and its insecure if we open 10250, remove this
-		// when we have better protections in place.
-		name: "invalid port type=LoadBalancer",
+		// Remove the limitation on exposing port 10250 externally
+		name: "valid port type=LoadBalancer",
 		tweakSvc: func(s *core.Service) {
 			s.Spec.Type = core.ServiceTypeLoadBalancer
 			s.Spec.ExternalTrafficPolicy = core.ServiceExternalTrafficPolicyCluster
 			s.Spec.AllocateLoadBalancerNodePorts = utilpointer.Bool(true)
 			s.Spec.Ports = append(s.Spec.Ports, core.ServicePort{Name: "kubelet", Port: 10250, Protocol: "TCP", TargetPort: intstr.FromInt32(12345)})
 		},
-		numErrs: 1,
+		numErrs: 0,
 	}, {
 		name: "valid LoadBalancer source range annotation",
 		tweakSvc: func(s *core.Service) {
@@ -25463,8 +25606,6 @@ func TestValidateSELinuxChangePolicy(t *testing.T) {
 }
 
 func TestValidatePodResize(t *testing.T) {
-	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.SidecarContainers, true)
-
 	mkPod := func(req, lim core.ResourceList, tweaks ...podtest.Tweak) *core.Pod {
 		return podtest.MakePod("pod", append(tweaks,
 			podtest.SetContainers(
@@ -25790,9 +25931,8 @@ func TestValidatePodResize(t *testing.T) {
 			test: "Pod QoS unchanged, burstable -> burstable, remove cpu and memory requests",
 			old:  mkPodWithInitContainers(getResources("100m", "100Mi", "", ""), getResources("100m", "", "", ""), ""),
 			new:  mkPodWithInitContainers(core.ResourceList{}, getResources("100m", "", "", ""), ""),
-			err:  "spec: Forbidden: only cpu and memory resources are mutable",
-		},
-		{
+			err:  "spec: Forbidden: resources for non-sidecar init containers are immutable",
+		}, {
 			test: "Pod with nil Resource field in Status",
 			old: mkPod(core.ResourceList{}, getResources("100m", "0", "1Gi", ""), podtest.SetStatus(core.PodStatus{
 				ContainerStatuses: []core.ContainerStatus{{
@@ -25859,6 +25999,36 @@ func TestValidatePodResize(t *testing.T) {
 			})),
 			new: mkPod(core.ResourceList{}, getResources("200m", "0", "1Gi", "")),
 			err: "",
+		}, {
+			test: "cpu limit change for sidecar containers",
+			old:  mkPodWithInitContainers(core.ResourceList{}, getResources("100m", "0", "1Gi", ""), core.ContainerRestartPolicyAlways),
+			new:  mkPodWithInitContainers(core.ResourceList{}, getResources("200m", "0", "1Gi", ""), core.ContainerRestartPolicyAlways),
+			err:  "",
+		}, {
+			test: "memory limit change for sidecar containers",
+			old:  mkPodWithInitContainers(core.ResourceList{}, getResources("100m", "200Mi", "", ""), core.ContainerRestartPolicyAlways),
+			new:  mkPodWithInitContainers(core.ResourceList{}, getResources("100m", "100Mi", "", ""), core.ContainerRestartPolicyAlways),
+			err:  "",
+		}, {
+			test: "storage limit change for sidecar containers",
+			old:  mkPodWithInitContainers(core.ResourceList{}, getResources("100m", "100Mi", "2Gi", ""), core.ContainerRestartPolicyAlways),
+			new:  mkPodWithInitContainers(core.ResourceList{}, getResources("100m", "100Mi", "1Gi", ""), core.ContainerRestartPolicyAlways),
+			err:  "spec: Forbidden: only cpu and memory resources for sidecar containers are mutable",
+		}, {
+			test: "cpu request change for sidecar containers",
+			old:  mkPodWithInitContainers(getResources("200m", "0", "", ""), core.ResourceList{}, core.ContainerRestartPolicyAlways),
+			new:  mkPodWithInitContainers(getResources("100m", "0", "", ""), core.ResourceList{}, core.ContainerRestartPolicyAlways),
+			err:  "",
+		}, {
+			test: "memory request change for sidecar containers",
+			old:  mkPodWithInitContainers(getResources("0", "100Mi", "", ""), core.ResourceList{}, core.ContainerRestartPolicyAlways),
+			new:  mkPodWithInitContainers(getResources("0", "200Mi", "", ""), core.ResourceList{}, core.ContainerRestartPolicyAlways),
+			err:  "",
+		}, {
+			test: "storage request change for sidecar containers",
+			old:  mkPodWithInitContainers(getResources("100m", "0", "1Gi", ""), core.ResourceList{}, core.ContainerRestartPolicyAlways),
+			new:  mkPodWithInitContainers(getResources("100m", "0", "2Gi", ""), core.ResourceList{}, core.ContainerRestartPolicyAlways),
+			err:  "spec: Forbidden: only cpu and memory resources for sidecar containers are mutable",
 		},
 	}
 

@@ -19,7 +19,7 @@ package pod
 import (
 	"strings"
 
-	"github.com/google/go-cmp/cmp"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	metavalidation "k8s.io/apimachinery/pkg/apis/meta/v1/validation"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -385,6 +385,8 @@ func GetValidationOptionsFromPodSpecAndMeta(podSpec, oldPodSpec *api.PodSpec, po
 		AllowNonLocalProjectedTokenPath:                   false,
 		AllowPodLifecycleSleepActionZeroValue:             utilfeature.DefaultFeatureGate.Enabled(features.PodLifecycleSleepActionAllowZero),
 		PodLevelResourcesEnabled:                          utilfeature.DefaultFeatureGate.Enabled(features.PodLevelResources),
+		AllowInvalidLabelValueInRequiredNodeAffinity:      false,
+		AllowSidecarResizePolicy:                          utilfeature.DefaultFeatureGate.Enabled(features.InPlacePodVerticalScaling),
 	}
 
 	// If old spec uses relaxed validation or enabled the RelaxedEnvironmentVariableValidation feature gate,
@@ -399,6 +401,7 @@ func GetValidationOptionsFromPodSpecAndMeta(podSpec, oldPodSpec *api.PodSpec, po
 		opts.AllowIndivisibleHugePagesValues = usesIndivisibleHugePagesValues(oldPodSpec)
 
 		opts.AllowInvalidLabelValueInSelector = hasInvalidLabelValueInAffinitySelector(oldPodSpec)
+		opts.AllowInvalidLabelValueInRequiredNodeAffinity = hasInvalidLabelValueInRequiredNodeAffinity(oldPodSpec)
 		// if old spec has invalid labelSelector in topologySpreadConstraint, we must allow it
 		opts.AllowInvalidTopologySpreadConstraintLabelSelector = hasInvalidTopologySpreadConstraintLabelSelector(oldPodSpec)
 		// if old spec has an invalid projected token volume path, we must allow it
@@ -417,7 +420,7 @@ func GetValidationOptionsFromPodSpecAndMeta(podSpec, oldPodSpec *api.PodSpec, po
 
 		opts.AllowPodLifecycleSleepActionZeroValue = opts.AllowPodLifecycleSleepActionZeroValue || podLifecycleSleepActionZeroValueInUse(podSpec)
 		// If oldPod has resize policy set on the restartable init container, we must allow it
-		opts.AllowSidecarResizePolicy = hasRestartableInitContainerResizePolicy(oldPodSpec)
+		opts.AllowSidecarResizePolicy = opts.AllowSidecarResizePolicy || hasRestartableInitContainerResizePolicy(oldPodSpec)
 	}
 	if oldPodMeta != nil && !opts.AllowInvalidPodDeletionCost {
 		// This is an update, so validate only if the existing object was valid.
@@ -1090,7 +1093,8 @@ func inPlacePodVerticalScalingInUse(podSpec *api.PodSpec) bool {
 		return false
 	}
 	var inUse bool
-	VisitContainers(podSpec, Containers, func(c *api.Container, containerType ContainerType) bool {
+	containersMask := Containers | InitContainers
+	VisitContainers(podSpec, containersMask, func(c *api.Container, containerType ContainerType) bool {
 		if len(c.ResizePolicy) > 0 {
 			inUse = true
 			return false
@@ -1271,9 +1275,23 @@ func IsRestartableInitContainer(initContainer *api.Container) bool {
 	return *initContainer.RestartPolicy == api.ContainerRestartPolicyAlways
 }
 
+func hasInvalidLabelValueInRequiredNodeAffinity(spec *api.PodSpec) bool {
+	if spec == nil ||
+		spec.Affinity == nil ||
+		spec.Affinity.NodeAffinity == nil ||
+		spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		return false
+	}
+	return helper.HasInvalidLabelValueInNodeSelectorTerms(spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms)
+}
+
 func MarkPodProposedForResize(oldPod, newPod *api.Pod) {
 	if len(newPod.Spec.Containers) != len(oldPod.Spec.Containers) {
 		// Update is invalid: ignore changes and let validation handle it
+		return
+	}
+
+	if utilfeature.DefaultFeatureGate.Enabled(features.SidecarContainers) && len(newPod.Spec.InitContainers) != len(oldPod.Spec.InitContainers) {
 		return
 	}
 
@@ -1281,14 +1299,26 @@ func MarkPodProposedForResize(oldPod, newPod *api.Pod) {
 		if c.Name != oldPod.Spec.Containers[i].Name {
 			return // Update is invalid (container mismatch): let validation handle it.
 		}
-		if c.Resources.Requests == nil {
-			continue
-		}
-		if cmp.Equal(oldPod.Spec.Containers[i].Resources, c.Resources) {
+		if apiequality.Semantic.DeepEqual(oldPod.Spec.Containers[i].Resources, c.Resources) {
 			continue
 		}
 		newPod.Status.Resize = api.PodResizeStatusProposed
 		return
+	}
+
+	if utilfeature.DefaultFeatureGate.Enabled(features.SidecarContainers) {
+		for i, c := range newPod.Spec.InitContainers {
+			if IsRestartableInitContainer(&c) {
+				if c.Name != oldPod.Spec.InitContainers[i].Name {
+					return // Update is invalid (container mismatch): let validation handle it.
+				}
+				if apiequality.Semantic.DeepEqual(oldPod.Spec.InitContainers[i].Resources, c.Resources) {
+					continue
+				}
+				newPod.Status.Resize = api.PodResizeStatusProposed
+				return
+			}
+		}
 	}
 }
 

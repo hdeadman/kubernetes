@@ -1268,16 +1268,6 @@ func verifyActions(t *testing.T, expected, actual *podActions, desc string) {
 }
 
 func TestComputePodActionsWithInitContainers(t *testing.T) {
-	t.Run("sidecar containers disabled", func(t *testing.T) {
-		testComputePodActionsWithInitContainers(t, false)
-	})
-	t.Run("sidecar containers enabled", func(t *testing.T) {
-		testComputePodActionsWithInitContainers(t, true)
-	})
-}
-
-func testComputePodActionsWithInitContainers(t *testing.T, sidecarContainersEnabled bool) {
-	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.SidecarContainers, sidecarContainersEnabled)
 	_, _, m, err := createTestRuntimeManager()
 	require.NoError(t, err)
 
@@ -1498,7 +1488,7 @@ func testComputePodActionsWithInitContainers(t *testing.T, sidecarContainersEnab
 		}
 		ctx := context.Background()
 		actions := m.computePodActions(ctx, pod, status)
-		handleRestartableInitContainers := sidecarContainersEnabled && kubelettypes.HasRestartableInitContainer(pod)
+		handleRestartableInitContainers := kubelettypes.HasRestartableInitContainer(pod)
 		if !handleRestartableInitContainers {
 			// If sidecar containers are disabled or the pod does not have any
 			// restartable init container, we should not see any
@@ -1553,7 +1543,6 @@ func makeBasePodAndStatusWithInitContainers() (*v1.Pod, *kubecontainer.PodStatus
 }
 
 func TestComputePodActionsWithRestartableInitContainers(t *testing.T) {
-	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.SidecarContainers, true)
 	_, _, m, err := createTestRuntimeManager()
 	require.NoError(t, err)
 
@@ -1973,16 +1962,6 @@ func TestComputePodActionsWithInitAndEphemeralContainers(t *testing.T) {
 	TestComputePodActions(t)
 	TestComputePodActionsWithInitContainers(t)
 
-	t.Run("sidecar containers disabled", func(t *testing.T) {
-		testComputePodActionsWithInitAndEphemeralContainers(t, false)
-	})
-	t.Run("sidecar containers enabled", func(t *testing.T) {
-		testComputePodActionsWithInitAndEphemeralContainers(t, true)
-	})
-}
-
-func testComputePodActionsWithInitAndEphemeralContainers(t *testing.T, sidecarContainersEnabled bool) {
-	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.SidecarContainers, sidecarContainersEnabled)
 	_, _, m, err := createTestRuntimeManager()
 	require.NoError(t, err)
 
@@ -2121,7 +2100,7 @@ func testComputePodActionsWithInitAndEphemeralContainers(t *testing.T, sidecarCo
 		}
 		ctx := context.Background()
 		actions := m.computePodActions(ctx, pod, status)
-		handleRestartableInitContainers := sidecarContainersEnabled && kubelettypes.HasRestartableInitContainer(pod)
+		handleRestartableInitContainers := kubelettypes.HasRestartableInitContainer(pod)
 		if !handleRestartableInitContainers {
 			// If sidecar containers are disabled or the pod does not have any
 			// restartable init container, we should not see any
@@ -2246,7 +2225,7 @@ func TestComputePodActionsForPodResize(t *testing.T) {
 					ContainersToUpdate: map[v1.ResourceName][]containerToUpdateInfo{
 						v1.ResourceMemory: {
 							{
-								apiContainerIdx: 1,
+								container:       &pod.Spec.Containers[1],
 								kubeContainerID: kcs.ID,
 								desiredContainerResources: containerResources{
 									memoryLimit: mem100M.Value(),
@@ -2260,7 +2239,7 @@ func TestComputePodActionsForPodResize(t *testing.T) {
 						},
 						v1.ResourceCPU: {
 							{
-								apiContainerIdx: 1,
+								container:       &pod.Spec.Containers[1],
 								kubeContainerID: kcs.ID,
 								desiredContainerResources: containerResources{
 									memoryLimit: mem100M.Value(),
@@ -2299,7 +2278,7 @@ func TestComputePodActionsForPodResize(t *testing.T) {
 					ContainersToUpdate: map[v1.ResourceName][]containerToUpdateInfo{
 						v1.ResourceCPU: {
 							{
-								apiContainerIdx: 1,
+								container:       &pod.Spec.Containers[1],
 								kubeContainerID: kcs.ID,
 								desiredContainerResources: containerResources{
 									memoryLimit: mem100M.Value(),
@@ -2338,7 +2317,7 @@ func TestComputePodActionsForPodResize(t *testing.T) {
 					ContainersToUpdate: map[v1.ResourceName][]containerToUpdateInfo{
 						v1.ResourceMemory: {
 							{
-								apiContainerIdx: 2,
+								container:       &pod.Spec.Containers[2],
 								kubeContainerID: kcs.ID,
 								desiredContainerResources: containerResources{
 									memoryLimit: mem200M.Value(),
@@ -2506,7 +2485,7 @@ func TestComputePodActionsForPodResize(t *testing.T) {
 					ContainersToUpdate: map[v1.ResourceName][]containerToUpdateInfo{
 						v1.ResourceMemory: {
 							{
-								apiContainerIdx: 1,
+								container:       &pod.Spec.Containers[1],
 								kubeContainerID: kcs.ID,
 								desiredContainerResources: containerResources{
 									memoryLimit: mem200M.Value(),
@@ -2546,7 +2525,7 @@ func TestComputePodActionsForPodResize(t *testing.T) {
 					ContainersToUpdate: map[v1.ResourceName][]containerToUpdateInfo{
 						v1.ResourceCPU: {
 							{
-								apiContainerIdx: 2,
+								container:       &pod.Spec.Containers[2],
 								kubeContainerID: kcs.ID,
 								desiredContainerResources: containerResources{
 									memoryLimit: mem100M.Value(),
@@ -2591,6 +2570,7 @@ func TestComputePodActionsForPodResize(t *testing.T) {
 
 func TestUpdatePodContainerResources(t *testing.T) {
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.InPlacePodVerticalScaling, true)
+	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.SidecarContainers, true)
 	fakeRuntime, _, m, err := createTestRuntimeManager()
 	m.machineInfo.MemoryCapacity = 17179860387 // 16GB
 	assert.NoError(t, err)
@@ -2620,7 +2600,7 @@ func TestUpdatePodContainerResources(t *testing.T) {
 	res300m350Mi := v1.ResourceList{v1.ResourceCPU: cpu300m, v1.ResourceMemory: mem350M}
 	res350m350Mi := v1.ResourceList{v1.ResourceCPU: cpu350m, v1.ResourceMemory: mem350M}
 
-	pod, _ := makeBasePodAndStatus()
+	pod, _ := makeBasePodAndStatusWithRestartableInitContainers()
 	makeAndSetFakePod(t, m, fakeRuntime, pod)
 
 	for dsc, tc := range map[string]struct {
@@ -2667,41 +2647,58 @@ func TestUpdatePodContainerResources(t *testing.T) {
 			expectedCurrentRequests: []v1.ResourceList{res100m150Mi, res200m250Mi, res300m350Mi},
 		},
 	} {
-		var containersToUpdate []containerToUpdateInfo
-		for idx := range pod.Spec.Containers {
-			// default resize policy when pod resize feature is enabled
-			pod.Spec.Containers[idx].Resources = tc.apiSpecResources[idx]
-			pod.Status.ContainerStatuses[idx].Resources = &tc.apiStatusResources[idx]
-			cInfo := containerToUpdateInfo{
-				apiContainerIdx: idx,
-				kubeContainerID: kubecontainer.ContainerID{},
-				desiredContainerResources: containerResources{
-					memoryLimit:   tc.apiSpecResources[idx].Limits.Memory().Value(),
-					memoryRequest: tc.apiSpecResources[idx].Requests.Memory().Value(),
-					cpuLimit:      tc.apiSpecResources[idx].Limits.Cpu().MilliValue(),
-					cpuRequest:    tc.apiSpecResources[idx].Requests.Cpu().MilliValue(),
-				},
-				currentContainerResources: &containerResources{
-					memoryLimit:   tc.apiStatusResources[idx].Limits.Memory().Value(),
-					memoryRequest: tc.apiStatusResources[idx].Requests.Memory().Value(),
-					cpuLimit:      tc.apiStatusResources[idx].Limits.Cpu().MilliValue(),
-					cpuRequest:    tc.apiStatusResources[idx].Requests.Cpu().MilliValue(),
-				},
+		for _, allSideCarCtrs := range []bool{false, true} {
+			var containersToUpdate []containerToUpdateInfo
+			containerToUpdateInfo := func(container *v1.Container, idx int) containerToUpdateInfo {
+				return containerToUpdateInfo{
+					container:       container,
+					kubeContainerID: kubecontainer.ContainerID{},
+					desiredContainerResources: containerResources{
+						memoryLimit:   tc.apiSpecResources[idx].Limits.Memory().Value(),
+						memoryRequest: tc.apiSpecResources[idx].Requests.Memory().Value(),
+						cpuLimit:      tc.apiSpecResources[idx].Limits.Cpu().MilliValue(),
+						cpuRequest:    tc.apiSpecResources[idx].Requests.Cpu().MilliValue(),
+					},
+					currentContainerResources: &containerResources{
+						memoryLimit:   tc.apiStatusResources[idx].Limits.Memory().Value(),
+						memoryRequest: tc.apiStatusResources[idx].Requests.Memory().Value(),
+						cpuLimit:      tc.apiStatusResources[idx].Limits.Cpu().MilliValue(),
+						cpuRequest:    tc.apiStatusResources[idx].Requests.Cpu().MilliValue(),
+					},
+				}
 			}
-			containersToUpdate = append(containersToUpdate, cInfo)
-		}
-		fakeRuntime.Called = []string{}
-		err := m.updatePodContainerResources(pod, tc.resourceName, containersToUpdate)
-		require.NoError(t, err, dsc)
 
-		if tc.invokeUpdateResources {
-			assert.Contains(t, fakeRuntime.Called, "UpdateContainerResources", dsc)
-		}
-		for idx := range pod.Spec.Containers {
-			assert.Equal(t, tc.expectedCurrentLimits[idx].Memory().Value(), containersToUpdate[idx].currentContainerResources.memoryLimit, dsc)
-			assert.Equal(t, tc.expectedCurrentRequests[idx].Memory().Value(), containersToUpdate[idx].currentContainerResources.memoryRequest, dsc)
-			assert.Equal(t, tc.expectedCurrentLimits[idx].Cpu().MilliValue(), containersToUpdate[idx].currentContainerResources.cpuLimit, dsc)
-			assert.Equal(t, tc.expectedCurrentRequests[idx].Cpu().MilliValue(), containersToUpdate[idx].currentContainerResources.cpuRequest, dsc)
+			if allSideCarCtrs {
+				for idx := range pod.Spec.InitContainers {
+					// default resize policy when pod resize feature is enabled
+					pod.Spec.InitContainers[idx].Resources = tc.apiSpecResources[idx]
+					pod.Status.ContainerStatuses[idx].Resources = &tc.apiStatusResources[idx]
+					cinfo := containerToUpdateInfo(&pod.Spec.InitContainers[idx], idx)
+					containersToUpdate = append(containersToUpdate, cinfo)
+				}
+			} else {
+				for idx := range pod.Spec.Containers {
+					// default resize policy when pod resize feature is enabled
+					pod.Spec.Containers[idx].Resources = tc.apiSpecResources[idx]
+					pod.Status.ContainerStatuses[idx].Resources = &tc.apiStatusResources[idx]
+					cinfo := containerToUpdateInfo(&pod.Spec.Containers[idx], idx)
+					containersToUpdate = append(containersToUpdate, cinfo)
+				}
+			}
+
+			fakeRuntime.Called = []string{}
+			err := m.updatePodContainerResources(pod, tc.resourceName, containersToUpdate)
+			require.NoError(t, err, dsc)
+
+			if tc.invokeUpdateResources {
+				assert.Contains(t, fakeRuntime.Called, "UpdateContainerResources", dsc)
+			}
+			for idx := range len(containersToUpdate) {
+				assert.Equal(t, tc.expectedCurrentLimits[idx].Memory().Value(), containersToUpdate[idx].currentContainerResources.memoryLimit, dsc)
+				assert.Equal(t, tc.expectedCurrentRequests[idx].Memory().Value(), containersToUpdate[idx].currentContainerResources.memoryRequest, dsc)
+				assert.Equal(t, tc.expectedCurrentLimits[idx].Cpu().MilliValue(), containersToUpdate[idx].currentContainerResources.cpuLimit, dsc)
+				assert.Equal(t, tc.expectedCurrentRequests[idx].Cpu().MilliValue(), containersToUpdate[idx].currentContainerResources.cpuRequest, dsc)
+			}
 		}
 	}
 }
@@ -3000,7 +2997,7 @@ func TestDoPodResizeAction(t *testing.T) {
 			}
 
 			updateInfo := containerToUpdateInfo{
-				apiContainerIdx:           0,
+				container:                 &pod.Spec.Containers[0],
 				kubeContainerID:           kps.ContainerStatuses[0].ID,
 				desiredContainerResources: tc.desiredResources,
 				currentContainerResources: &tc.currentResources,

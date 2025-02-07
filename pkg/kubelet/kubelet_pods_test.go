@@ -2619,7 +2619,6 @@ func TestPodPhaseWithRestartAlwaysRestartableInitContainers(t *testing.T) {
 			"all regular containers succeeded and restartable init container succeeded with restart always, but the pod is terminal",
 		},
 	}
-	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.SidecarContainers, true)
 	for _, test := range tests {
 		statusInfo := test.pod.Status.InitContainerStatuses
 		statusInfo = append(statusInfo, test.pod.Status.ContainerStatuses...)
@@ -2711,7 +2710,6 @@ func TestPodPhaseWithRestartAlwaysAndPodHasRun(t *testing.T) {
 			"regular init container is succeeded, restartable init container and regular containers are both running",
 		},
 	}
-	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.SidecarContainers, true)
 	for _, test := range tests {
 		statusInfo := test.pod.Status.InitContainerStatuses
 		statusInfo = append(statusInfo, test.pod.Status.ContainerStatuses...)
@@ -3115,7 +3113,6 @@ func TestPodPhaseWithRestartNeverRestartableInitContainers(t *testing.T) {
 			"backoff crashloop with non-zero restartable init container, main containers succeeded",
 		},
 	}
-	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.SidecarContainers, true)
 	for _, test := range tests {
 		statusInfo := test.pod.Status.InitContainerStatuses
 		statusInfo = append(statusInfo, test.pod.Status.ContainerStatuses...)
@@ -6674,6 +6671,8 @@ func TestResolveRecursiveReadOnly(t *testing.T) {
 }
 
 func TestAllocatedResourcesMatchStatus(t *testing.T) {
+	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.SidecarContainers, true)
+	containerRestartPolicyAlways := v1.ContainerRestartPolicyAlways
 	tests := []struct {
 		name               string
 		allocatedResources v1.ResourceRequirements
@@ -6878,35 +6877,62 @@ func TestAllocatedResourcesMatchStatus(t *testing.T) {
 	}}
 
 	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			allocatedPod := v1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test",
-				},
-				Spec: v1.PodSpec{
-					Containers: []v1.Container{{
-						Name:      "c",
-						Resources: test.allocatedResources,
-					}},
-				},
+		for _, isSidecarContainer := range []bool{false, true} {
+			if isSidecarContainer {
+				test.name += " " + "for sidecar containers"
 			}
-			state := kubecontainer.ContainerStateRunning
-			if test.statusTerminated {
-				state = kubecontainer.ContainerStateExited
-			}
-			podStatus := &kubecontainer.PodStatus{
-				Name: "test",
-				ContainerStatuses: []*kubecontainer.Status{
-					{
-						Name:      "c",
-						State:     state,
-						Resources: test.statusResources,
-					},
-				},
-			}
+			t.Run(test.name, func(t *testing.T) {
+				var podStatus *kubecontainer.PodStatus
+				state := kubecontainer.ContainerStateRunning
+				if test.statusTerminated {
+					state = kubecontainer.ContainerStateExited
+				}
 
-			match := allocatedResourcesMatchStatus(&allocatedPod, podStatus)
-			assert.Equal(t, test.expectMatch, match)
-		})
+				allocatedPod := v1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "test",
+					},
+				}
+
+				if isSidecarContainer {
+					allocatedPod.Spec = v1.PodSpec{
+						InitContainers: []v1.Container{{
+							Name:          "c1-init",
+							Resources:     test.allocatedResources,
+							RestartPolicy: &containerRestartPolicyAlways,
+						}},
+					}
+					podStatus = &kubecontainer.PodStatus{
+						Name: "test",
+						ContainerStatuses: []*kubecontainer.Status{
+							{
+								Name:      "c1-init",
+								State:     state,
+								Resources: test.statusResources,
+							},
+						},
+					}
+				} else {
+					allocatedPod.Spec = v1.PodSpec{
+						Containers: []v1.Container{{
+							Name:      "c",
+							Resources: test.allocatedResources,
+						}},
+					}
+					podStatus = &kubecontainer.PodStatus{
+						Name: "test",
+						ContainerStatuses: []*kubecontainer.Status{
+							{
+								Name:      "c",
+								State:     state,
+								Resources: test.statusResources,
+							},
+						},
+					}
+				}
+				match := allocatedResourcesMatchStatus(&allocatedPod, podStatus)
+				assert.Equal(t, test.expectMatch, match)
+			})
+		}
 	}
 }
