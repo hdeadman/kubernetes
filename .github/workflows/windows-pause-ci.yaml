@@ -28,7 +28,6 @@ jobs:
 
   build-containers:
     needs: [cross-compile-windows]
-    runs-on: windows-2019
     name: Build Containers
     permissions:
       contents: read
@@ -38,6 +37,10 @@ jobs:
     defaults:
       run:
         shell: msys2 {0}
+    strategy:
+      matrix:
+        windows_version: ["2019", 2022"]
+    runs-on: "windows-${{ matrix.windows_version }}"
     steps:
     - name: Setup Msys2
       uses: msys2/setup-msys2@v2
@@ -56,11 +59,13 @@ jobs:
           build/pause/bin
     - name: Docker Build
       id: docker_build
+      env:
+        CROSS_ARCH: ${{ matrix.job.arch }}
       run: |
-        ls
-        docker build -f build/pause/Dockerfile_windows --build-arg BASE=mcr.microsoft.com/windows/nanoserver:ltsc2019 --build-arg ARCH=amd64 build/pause --tag ${{ env.IMAGE_NAME }}
-        docker tag ${{ env.IMAGE_NAME }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-        echo "digest=$(docker inspect --format='{{index .Id }}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }})" >> "$GITHUB_OUTPUT"
+        echo ${{ matrix.windows_version }}
+        docker build -f build/pause/Dockerfile_windows --build-arg BASE=mcr.microsoft.com/windows/nanoserver:ltsc${{ matrix.windows_version }} --build-arg ARCH=amd64 build/pause --tag ${{ env.IMAGE_NAME }}
+        docker tag ${{ env.IMAGE_NAME }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.windows_version }}
+        echo "digest${{ matrix.windows_version }}=$(docker inspect --format='{{index .Id }}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }})" >> "$GITHUB_OUTPUT"
     - name: Log in to the Container registry
       uses: docker/login-action@v3
       with:
@@ -76,19 +81,13 @@ jobs:
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.windows_version }}
     - name: Docker Push
       run: |
-        docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.windows_version }}
         #docker push ${{ env.IMAGE_NAME }}
-    - name: Debug Outputs
+    - name: Show Output
       env:
         OUTPUTS: ${{ toJSON(steps.docker_build.outputs) }}
       run: echo "$OUTPUTS"
       shell: bash
-    - name: Generate artifact attestation
-      uses: actions/attest-build-provenance@v2
-      with:
-        subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME}}
-        subject-digest: ${{ steps.docker_build.outputs.digest }}
-        push-to-registry: true
