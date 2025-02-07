@@ -59,7 +59,7 @@ jobs:
       run: |
         ls
         docker build -f build/pause/Dockerfile_windows --build-arg BASE=mcr.microsoft.com/windows/nanoserver:ltsc2019 --build-arg ARCH=amd64 build/pause --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-        echo "digest=$(docker inspect --format='{{index .RepoDigests 0}}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }})\n" >> $GITHUB_OUTPUT
+        echo "digest=$(docker inspect --format='{{index .Id }}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }})\n" >> $GITHUB_OUTPUT
     - name: Log in to the Container registry
       uses: docker/login-action@v3
       with:
