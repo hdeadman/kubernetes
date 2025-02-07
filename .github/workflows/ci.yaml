@@ -5,6 +5,17 @@ on:
     - master
 
 jobs:
+  cross-compile-windows:
+    runs-on: ubuntu-latest
+    name: Cross Compile Windows
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+    - name: Build Pause and Wincat
+      run: |
+        cd build/pause
+        make build OS=windows
+
   build-containers:
     runs-on: windows-2019
     name: Build Containers
