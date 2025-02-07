@@ -6,7 +6,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: windows-pause
+  IMAGE_NAME: "${{ github.repository }}-windows-pause"
 
 jobs:
   cross-compile-windows:
