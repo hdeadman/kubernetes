@@ -65,6 +65,7 @@ jobs:
         echo ${{ matrix.windows_version }}
         docker build -f build/pause/Dockerfile_windows --build-arg BASE=mcr.microsoft.com/windows/nanoserver:ltsc${{ matrix.windows_version }} --build-arg ARCH=amd64 build/pause --tag ${{ env.IMAGE_NAME }}
         docker tag ${{ env.IMAGE_NAME }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.windows_version }}
+        docker tag ${{ env.IMAGE_NAME }} dtrajd/pause:${{ matrix.windows_version }}
         echo "digest${{ matrix.windows_version }}=$(docker inspect --format='{{index .Id }}' ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }})" >> "$GITHUB_OUTPUT"
     - name: Log in to the Container registry
       uses: docker/login-action@v3
@@ -72,11 +73,11 @@ jobs:
         registry: ${{ env.REGISTRY }}
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-#    - name: Log in to Docker Hub
-#      uses: docker/login-action@v3
-#      with:
-#        username: ${{ secrets.DOCKER_USERNAME }}
-#        password: ${{ secrets.DOCKER_PASSWORD }}
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
     - name: Extract metadata (tags, labels) for Docker
       id: meta
       uses: docker/metadata-action@v5
@@ -85,7 +86,7 @@ jobs:
     - name: Docker Push
       run: |
         docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.windows_version }}
-        #docker push ${{ env.IMAGE_NAME }}
+        docker push dtrajd/pause:${{ matrix.windows_version }}
     - name: Show Output
       env:
         OUTPUTS: ${{ toJSON(steps.docker_build.outputs) }}
